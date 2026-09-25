@@ -1,6 +1,6 @@
 {
   "name": "dsh-archived-sessions",
-  "version": "0.1.5",
+  "version": "0.2.0",
   "description": "DSH web plugin: an Archived Sessions manager in Settings — browse archived conversations, expand per-session details (disk usage, downloads, tool usage, lineage, cross-session recall), multi-select and permanently delete.",
   "type": "module",
   "main": "lib/index.js",
@@ -14,7 +14,11 @@
     "./package.json": "./package.json"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=20",
+    "dsh": ">=0.1.7-rc.2"
+  },
+  "scripts": {
+    "test": "node --test"
   },
   "dsh": {
     "bundle": {
@@ -24,41 +28,36 @@
       "inject": [
         "@deepseek-ai/dsh-client-runtime",
         "@deepseek-ai/dsh-client-locale",
-        "@deepseek-ai/dsh-client-ui-slots"
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-ui-settings"
       ],
       "platform": "web"
     }
   },
   "license": "MIT",
-  "author": "Zephyr-vibe",
+  "author": "Zephyr-vibe (original work), AkotaP (fork)",
+  "contributors": [
+    "Zephyr-vibe <719569019@qq.com> (upstream author)"
+  ],
+  "homepage": "https://github.com/AkotaP/dsh-archived-sessions#readme",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Zephyr-vibe/dsh-archived-sessions.git"
+    "url": "https://github.com/AkotaP/dsh-archived-sessions.git"
+  },
+  "bugs": {
+    "url": "https://github.com/AkotaP/dsh-archived-sessions/issues"
   },
   "dependencies": {
-    "schemastery": "^3.18.0"
+    "@deepseek-ai/schemastery": "^3.18.4"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-agent": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-client-locale": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-client-runtime": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-client-ui-primitives": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-client-ui-slots": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-host-webserver": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-session": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-session-persistence": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-session-persistence-jsonl": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-workspace": "^0.1.0-rc.6",
-    "react": "^18.2.0"
-  },
-  "optionalPeerDependencies": {
-    "@deepseek-ai/dsh-agent-loop": "^0.1.0-rc.6"
+    "@deepseek-ai/cordis": "^4.0.1"
   },
   "files": [
     "lib",
     "cordis.patch.yml",
-    "README.md", "docs",
+    "README.md",
+    "docs",
     "LICENSE",
     "package.json"
   ]
