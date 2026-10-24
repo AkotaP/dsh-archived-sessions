@@ -1,8 +1,8 @@
-# dsh-archived-sessions 使用手册（v0.2.0）
+# dsh-archived-sessions 使用手册（v0.3.0）
 
 > 安装方法见 README（方式一 tarball / 方式二让智能体安装）。本文只讲**怎么用**。
 
-> **关于本项目**：这是 [Zephyr-vibe/dsh-archived-sessions](https://github.com/Zephyr-vibe/dsh-archived-sessions) 的 **fork**，由 **AkotaP** 二次开发维护，仓库在 [AkotaP/dsh-archived-sessions](https://github.com/AkotaP/dsh-archived-sessions)；相对上游的改动见 README 的更新日志。本手册对应 **v0.2.0**（面向 DSH 核心 **0.1.7-rc.2**）。
+> **关于本项目**：这是 [Zephyr-vibe/dsh-archived-sessions](https://github.com/Zephyr-vibe/dsh-archived-sessions) 的 **fork**，由 **AkotaP** 二次开发维护，仓库在 [AkotaP/dsh-archived-sessions](https://github.com/AkotaP/dsh-archived-sessions)；相对上游的改动见 [CHANGELOG.md](CHANGELOG.md)。本手册对应 **v0.3.0**（面向 DSH 核心 **0.2.1-rc.2**）。
 
 ## 中文
 
@@ -10,6 +10,7 @@
 
 - **双标签**：所有对话 / 归档会话
 - **视图**：默认按工作区（无归属会话归入「未分组」），可切换单列表；**点工作区标题即可折叠 / 展开该组**（标题前有三角指示），「所有对话」和「归档会话」两个标签页都支持
+- **工作区横幅全选**：每个工作区标题内有一个「☐ 全选」复选框开关，点一下选中该组全部会话，再点一下取消；折叠组里的会话也算，其他工作区不受影响
 - **搜索框**：按标题或 ID 实时过滤
 - **行操作**：勾选 / 全选 / 展开详情 / 展开子代理（箭头）
 - **滑动批量勾选（长按左键拖选）**：在某一行**按住左键**不放，那一行的状态决定方向——原本没勾就进入「连续加选」，原本已勾就进入「连续取消」；然后**上下滑动**，滑过哪些会话行就跟着变，**松开左键**结束（在窗口外松开、或切走页面也会自动结束）。单独点复选框仍是逐行切换
@@ -32,13 +33,14 @@
 ```
 确认删除 N 个会话？
 会话记录将被永久删除，此操作不可恢复。
-☐ 删除其下子对话（子代理）      ← 勾选 = 级联删所有后代子代理（含孙级）
+☑ 删除其下子对话（子代理）      ← 默认勾选；取消勾选时整行转红并提示会留下孤儿子会话
 ☐ 删除所有下载文件/产出文件    ← 勾选 = 删除文件
 ```
 
-- 两个选项**默认都不勾选**——只删会话本身
-- 两项右侧显示**可删数量**，并且**边扫边刷新**：有子对话时数字会逐个会话补上来，扫到第一个产出文件就不再置灰（还没扫完时可能显示「（…）」）；某项没有可删内容时整行**置灰、复选框禁用**（悬停说明「没有可删除的内容」）
-- 开启「设置 → 删除确认弹窗 → 记住上次的选项」后，每次打开弹窗都**沿用上次对这两项的勾选**
+- **子对话默认勾选**（未开「记住上次的选项」时），避免删父会话后留下一堆孤儿子代理；产出文件默认不勾选，可在弹窗里手动勾
+- **红色不再表示“勾选”**：只有“有子对话但没勾选”时整行转红并显示提示；勾选状态本身使用强调色，不再染红（文件复选框保持原来的红色）
+- 两项右侧显示**可删数量**，并且**边扫边刷新**：有子对话时数字会逐个会话补上来，扫到第一个产出文件就不再置灰（还没扫完时可能显示「（…）」）；某项没有可删内容时整行**置灰、复选框禁用**，但**仍显示上次的勾选状态**（悬停说明「没有可删除的内容」）
+- 开启「设置 → 删除确认弹窗 → 记住上次的选项」后，每次打开弹窗都**沿用上次对这两项的勾选**；关闭时子对话回到默认勾选
 - 点选项右侧箭头可展开查看详情：
   - 子代理区：只显示子代理（含孙级等全部后代）+ 个数，可逐个勾选
   - 文件区：文件夹/文件树，可勾选文件夹（整删，含递归）或单个文件
@@ -66,7 +68,7 @@
 1. **删除不可恢复**：会话记录/文件删除后无法找回
 2. **工作区根目录绝不删除**：即使勾选了文件/文件夹，根本身受保护；根下直接文件只删文件本身
 3. **文件列表是历史记录**：显示该会话产出过的文件；已物理删除的文件不再显示
-4. **默认不勾选**：删除弹窗两个选项默认关闭，按需手动勾选
+4. **子对话默认勾选、文件默认不勾选**：想保留子对话就手动取消（会显示红色孤儿提示）；产出文件需要手动勾选才会删除
 5. **API 仅本机**：`--host 0.0.0.0` 启动时插件不可用（403）
 6. **运行中的会话**删除会被拒绝（409），先停止会话
 7. 当前会话（UI 打开的那个）不可删除
@@ -77,12 +79,13 @@
 
 > For installation, see README (Option 1 tarball / Option 2 let an agent install it). This document covers **usage only**.
 
-> **About this project**: this is a **fork** of [Zephyr-vibe/dsh-archived-sessions](https://github.com/Zephyr-vibe/dsh-archived-sessions), further developed and maintained by **AkotaP** at [AkotaP/dsh-archived-sessions](https://github.com/AkotaP/dsh-archived-sessions); see the README changelog for what the fork changed. This manual covers **v0.2.0** (built for DSH core **0.1.7-rc.2**).
+> **About this project**: this is a **fork** of [Zephyr-vibe/dsh-archived-sessions](https://github.com/Zephyr-vibe/dsh-archived-sessions), further developed and maintained by **AkotaP** at [AkotaP/dsh-archived-sessions](https://github.com/AkotaP/dsh-archived-sessions); see [CHANGELOG.md](CHANGELOG.md) for what the fork changed. This manual covers **v0.3.0** (built for DSH core **0.2.1-rc.2**).
 
 ### Session list
 
 - **Two tabs**: All conversations / Archived
 - **View**: by workspace by default (unassigned sessions fall into "Ungrouped"); switchable to a flat list — **click a workspace heading to collapse / expand that group** (with a disclosure triangle), on both the All conversations and Archived tabs
+- **Workspace banner select-all**: each workspace heading has one "☐ Select all" checkbox toggle: click to select the whole group, click again to clear it; collapsed members count and other workspaces are untouched
 - **Search box**: filter by title or id in real time
 - **Row actions**: checkbox / select-all / expand details / expand subagents (arrow)
 - **Press-and-drag multi-select**: **hold the left button** on a row — its current state picks the direction (unchecked = "keep adding", checked = "keep removing") — then **slide up or down**: every session row you pass follows that direction. Releasing the button ends the gesture (as does releasing outside the window or switching away from the page). Clicking a single checkbox still toggles one row
@@ -105,13 +108,14 @@ The confirmation dialog contains:
 ```
 Confirm deleting N session(s)?
 Session logs will be permanently removed. This cannot be undone.
-☐ Delete their sub-conversations (subagents)      <- cascades to ALL descendant subagents (incl. grandchildren)
+☑ Delete their sub-conversations (subagents)      <- checked by default; unchecking turns the row red with an orphan warning
 ☐ Delete all downloaded/produced files            <- deletes files
 ```
 
-- Both options are **unchecked by default** — only the session itself is removed
-- Each option shows a **count** that **fills in as the scan runs** (with subagents the number grows session by session, and the first produced file un-greys the option; an incomplete scan may show "（…）"); an option with nothing to delete is **greyed out with its checkbox disabled** (hover says "nothing to delete")
-- With Settings → Delete confirmation dialog → "Remember the last choice" on, every dialog **reuses your last selections**
+- **Sub-conversations are checked by default** (when "Remember the last choice" is off), so deleting a parent does not leave orphan subagents behind; produced files stay unchecked unless you select them
+- **Red no longer means "checked"**: only "sub-conversations exist but are unchecked" turns the row red with an explanatory hint. Checking uses the accent colour (the file checkbox keeps its original red)
+- Each option shows a **count** that **fills in as the scan runs** (with subagents the number grows session by session, and the first produced file un-greys the option; an incomplete scan may show "（…）"); an option with nothing to delete is **greyed out with its checkbox disabled** but **still shows the last choice** (hover says "nothing to delete")
+- With Settings → Delete confirmation dialog → "Remember the last choice" on, every dialog **reuses your last selections**; with it off, sub-conversations return to the checked default
 - Click the arrow next to an option to inspect:
   - Subagents: only subagents (all descendants incl. grandchildren) with a count; check each individually
   - Files: folder/file tree; check a folder (whole removal, recursive) or single files
@@ -139,7 +143,7 @@ The Settings tab has a second section, **Delete confirmation dialog → Remember
 1. **Deletion is irreversible**: session logs/files cannot be recovered
 2. **Workspace roots are never deleted**: even with files/folders selected, the root itself is protected; files directly under the root are removed as files only
 3. **The file list is history**: it reflects files produced by the session; physically deleted files no longer appear
-4. **Nothing is checked by default** in the delete dialog — opt in deliberately
+4. **Sub-conversations are checked by default; produced files are not** — uncheck the subagents to keep them (the row turns red with an orphan warning), and select produced files deliberately
 5. **Loopback-only API**: starting the web app with `--host 0.0.0.0` makes the plugin unavailable (403)
 6. **Running sessions** are refused on delete (409) — stop them first
 7. The session currently open in the UI cannot be deleted

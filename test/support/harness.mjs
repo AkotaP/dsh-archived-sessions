@@ -189,8 +189,9 @@ export function loadHost(cacheBust = String(Date.now())) {
  * @param options.guarded - emulate the browser facade: the property read throws.
  * @param options.sessions - snapshot for `useSessions`-style reads is supplied by the caller via props.
  */
-export function makeClientContext({ form, declared = true, guarded = false } = {}) {
+export function makeClientContext({ form, declared = true, guarded = false, injectable = false } = {}) {
   const slots = new Map();
+  const injected = [];
   const ctx = {
     locale: { register: () => {}, bind: () => (key) => key },
     effect: (fn) => { fn(); return () => {}; },
@@ -204,7 +205,12 @@ export function makeClientContext({ form, declared = true, guarded = false } = {
   };
   if (guarded) Object.defineProperty(ctx, "configForms", { get() { throw new Error('cannot get property "configForms" without inject'); } });
   else if (declared && form !== undefined) ctx.configForms = { get: () => form };
-  return { ctx, slots };
+  if (injectable) {
+    // Minimal stand-in for cordis `ctx.inject(deps, apply)`: record the wait so a
+    // test can deliver the service later and run the callback.
+    ctx.inject = (deps, callback) => { injected.push({ deps, callback }); return { then: () => {} }; };
+  }
+  return { ctx, slots, injected };
 }
 
 /** A settings-form double matching `ConfigFormController`'s public surface. */
@@ -273,6 +279,9 @@ export async function callApi(routes, method, body, headers = {}) {
     method: "POST",
     url: "/archived/api/" + method,
     headers: { host: "127.0.0.1:19387", "content-type": "application/json", ...headers },
+    // The route trusts the socket address (not the forgeable Host header);
+    // pass a non-loopback one via headers["x-socket-address"] to test the fence.
+    socket: { remoteAddress: typeof headers["x-socket-address"] === "string" ? headers["x-socket-address"] : "127.0.0.1" },
     async *[Symbol.asyncIterator]() { yield payload; },
   };
   let status = 0;

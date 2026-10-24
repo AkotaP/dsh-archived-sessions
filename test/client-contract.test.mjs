@@ -37,8 +37,8 @@ test("declares the three delete entry points and the frame-wide dialog", () => {
     "sidebar.workspaces.session.menu.item",
     "sidebar.workspaces.session.row.action",
   ]);
-  assert.ok(plugin.inject.includes("configForms"), "the settings service must be declared on the plugin");
-  assert.equal(slots.get("sidebar.workspaces.session.menu.item").options.order, 450);
+  assert.equal(plugin.inject.includes("configForms"), false, "ui-settings is optional; configForms is bound at runtime so the plugin still loads without it");
+  assert.equal(slots.get("sidebar.workspaces.session.menu.item").options.order, 460);
   assert.equal(slots.get("shell.overlay").options.id, "archived-sessions-delete-confirm");
   assert.equal(slots.get("shell.overlay").options.order, 200);
 });
@@ -157,6 +157,8 @@ test("the delete affordances keep their styles and the entry id matches the bund
   assert.ok(source.includes("marginLeft: 9 + (depth - 1) * 16"), "each level owns one more 16px column");
   assert.ok(!source.includes("paddingLeft: 20 + (depth - 1) * 16"), "the old inline padding override is gone");
   assert.ok(source.includes(".aRchv_deleteOptionOn .aRchv_deleteOptionCount{"), "a checked option highlights its count");
+  assert.ok(source.includes(".aRchv_deleteOption[data-delete-option=subagents]:not(.aRchv_deleteOptionOff) input[type=checkbox]{accent-color:var(--dsw-accent-strong)}"), "the recommended sub-conversation check uses the neutral accent, not danger red");
+  assert.ok(source.includes(".aRchv_deleteOption input[type=checkbox]{cursor:pointer;accent-color:var(--dsw-alias-state-error-primary)"), "the file option keeps its existing checkbox colour");
   const entryId = /const DELETE_CONFIG_ID = "([^"]+)";/.exec(source)?.[1];
   const patch = readRepo("cordis.patch.yml");
   assert.ok(entryId, "the client must name the settings namespace it reads");
@@ -224,7 +226,8 @@ test("the option memory restores the last subagent and file choices when enabled
     const dialog = await openDeleteDialog({ ...scenario, config: { rememberDeleteOptions: remember } });
     let elements = dialog.render();
     const rows = () => optionRows(elements);
-    assert.equal(rows().every((row) => optionInput(row).props.checked === false), true, "a fresh dialog starts unchecked");
+    assert.equal(optionInput(rows()[0]).props.checked, true, "sub-conversations start selected by default");
+    assert.equal(optionInput(rows()[1]).props.checked, false, "produced files still start unchecked");
     optionInput(rows()[0]).props.onChange({ target: { checked: true } });
     elements = dialog.render();
     optionInput(rows()[1]).props.onChange({ target: { checked: true } });
@@ -239,15 +242,43 @@ test("the option memory restores the last subagent and file choices when enabled
     return rows().map((row) => optionInput(row).props.checked);
   };
   assert.deepEqual(await cycle(true), [true, true], "memory on: the previous choices come back");
-  assert.deepEqual(await cycle(false), [false, false], "memory off: the dialog resets to unchecked");
+  assert.deepEqual(await cycle(false), [true, false], "memory off: sub-conversations default to selected, files stay unchecked");
 });
 
-test("a greyed-out option still shows the remembered check", async () => {
+test("sub-conversations default to selected, and only an unchecked option warns in red", async () => {
+  const dialog = await openDeleteDialog({
+    byId: { s1: { title: "Parent" }, k1: { title: "Kid", origin: "subagent", parentId: "s1" } },
+    details: { cwd: "E:/ws", files: [{ path: "E:/ws/out/report.md" }] },
+    config: { rememberDeleteOptions: false },
+  });
+  let elements = dialog.render();
+  let rows = optionRows(elements);
+  assert.equal(optionInput(rows[0]).props.checked, true, "sub-conversations are selected by default");
+  assert.equal(hasClass(rows[0], "aRchv_deleteOptionWarn"), false, "a selected option is not a warning");
+  assert.equal(hasClass(rows[1], "aRchv_deleteOptionWarn"), false, "an unchecked file option is not a warning either");
+
+  optionInput(rows[1]).props.onChange({ target: { checked: true } });
+  elements = dialog.render();
+  rows = optionRows(elements);
+  assert.equal(hasClass(rows[1], "aRchv_deleteOptionOn"), true, "checking files highlights the option");
+  assert.equal(hasClass(rows[1], "aRchv_deleteOptionWarn"), false, "checking files does not turn the row red");
+
+  optionInput(rows[0]).props.onChange({ target: { checked: false } });
+  elements = dialog.render();
+  rows = optionRows(elements);
+  assert.equal(hasClass(rows[0], "aRchv_deleteOptionWarn"), true, "leaving sub-conversations unchecked is the warning state");
+  assert.equal(hasClass(rows[0], "aRchv_deleteOptionOn"), false, "an unchecked option is not highlighted as selected");
+  assert.ok(textOf([rows[0]]).includes("deleteWarnSubagents"), "the warning carries an explanatory hint");
+});
+
+test("a greyed-out option still shows the last choice (even with remember off)", async () => {
   const byId = { s1: { title: "Parent" }, k1: { title: "Kid", origin: "subagent", parentId: "s1" } };
   const details = { cwd: "E:/ws", files: [{ path: "E:/ws/out/report.md" }] };
-  const dialog = await openDeleteDialog({ byId, details, config: { rememberDeleteOptions: true } });
+  const dialog = await openDeleteDialog({ byId, details, config: { rememberDeleteOptions: false } });
   let elements = dialog.render();
   optionInput(optionRows(elements)[0]).props.onChange({ target: { checked: true } });
+  elements = dialog.render();
+  optionInput(optionRows(elements)[1]).props.onChange({ target: { checked: true } });
   elements = dialog.render();
   openModal(elements).props.footer.props.children[0].props.onClick(); // cancel
   assert.deepEqual(dialog.render(), []);
@@ -262,8 +293,8 @@ test("a greyed-out option still shows the remembered check", async () => {
   assert.deepEqual(rows.map((row) => row.props["data-count"]), ["0", "0"]);
   assert.equal(hasClass(rows[0], "aRchv_deleteOptionOff"), true, "nothing to delete greys the option out");
   assert.equal(optionInput(rows[0]).props.disabled, true, "and disables its toggle");
-  assert.equal(optionInput(rows[0]).props.checked, true, "the remembered check survives the grey-out");
-  assert.equal(optionInput(rows[1]).props.checked, false, "an option that was never checked stays unchecked");
+  assert.equal(optionInput(rows[0]).props.checked, true, "the last sub-conversation choice survives the grey-out");
+  assert.equal(optionInput(rows[1]).props.checked, true, "the last file choice survives the grey-out too, so both dialogs agree");
 });
 
 test("the dialog reads every session's details concurrently", async () => {
@@ -539,3 +570,261 @@ test("the archived tab nests an archived subagent under its parent and lifts it 
   assert.ok(hasClass(rowOf(elements, "Child"), "aRchv_subagentRow"), "with both archived the child nests under its parent again");
 });
 
+
+
+test("the current session is derived from retainedBy.mainView on 0.2.x", () => {
+  const { component } = mount();
+  const byId = {
+    s1: { title: "Working", updatedAt: 2, retainedBy: { mainView: 1 } },
+    s2: { title: "Other", updatedAt: 1, retainedBy: {} },
+  };
+  const props = {
+    // No legacy `current` key: 0.2.x removed it from the session list state.
+    useSessions: (selector) => selector({ byId, phase: "ready" }),
+    useWorkspaces: (selector) => selector({ items: [], archivedSessionIds: [], state: "ready" }),
+    refresh: () => {}, t: T,
+  };
+  const elements = renderSlot(component("settings.section"), props);
+  const rowOf = (title) => findElement(elements, (el) => hasClass(el, "aRchv_row") && textOf([el]).includes(title));
+  const currentRow = rowOf("Working");
+  assert.ok(currentRow, "the main-view session renders");
+  assert.ok(hasClass(currentRow, "aRchv_current"), "main-view occupancy marks the row as current");
+  assert.equal(currentRow.props.tabIndex, -1, "the current row is not keyboard-selectable");
+  assert.equal(rowOf("Other").props.tabIndex, 0, "other rows remain selectable");
+});
+
+test("search filters the grouped workspace rows (default view)", () => {
+  const { component } = mount();
+  const byId = { s1: { title: "Alpha", updatedAt: 2 }, s2: { title: "Beta", updatedAt: 1 } };
+  const props = {
+    useSessions: (selector) => selector({ byId, phase: "ready" }),
+    useWorkspaces: (selector) => selector({
+      items: [{ workspaceId: "w1", title: "WS", path: "E:/ws", sessionIds: ["s1", "s2"] }],
+      archivedSessionIds: [], state: "ready",
+    }),
+    refresh: () => {}, t: T,
+  };
+  const instance = createInstance();
+  const render = () => renderSlotFor(component("settings.section"), props, instance);
+  const rowOf = (elements, title) => findElement(elements, (el) => hasClass(el, "aRchv_row") && textOf([el]).includes(title));
+
+  let elements = render();
+  assert.ok(rowOf(elements, "Alpha") && rowOf(elements, "Beta"), "both grouped rows start visible");
+  findElement(elements, (el) => el.props.placeholder === "searchPlaceholder").props.onChange({ target: { value: "Beta" } });
+  elements = render();
+  assert.equal(rowOf(elements, "Alpha"), undefined, "the default grouped view honours the search filter");
+  assert.ok(rowOf(elements, "Beta"), "the matching row stays");
+});
+
+test("the archived tab hides archive ids whose session record is gone", () => {
+  const { component } = mount();
+  const byId = { s1: { title: "Kept", updatedAt: 2 } };
+  const props = {
+    useSessions: (selector) => selector({ byId, phase: "ready" }),
+    useWorkspaces: (selector) => selector({ items: [], archivedSessionIds: ["s1", "gone"], state: "ready" }),
+    refresh: () => {}, t: T,
+  };
+  const instance = createInstance();
+  const render = () => renderSlotFor(component("settings.section"), props, instance);
+  let elements = render();
+  findElement(elements, (el) => el.props.role === "tab" && el.props.children === "tab.archived").props.onClick();
+  elements = render();
+  assert.ok(findElement(elements, (el) => hasClass(el, "aRchv_row") && textOf([el]).includes("Kept")), "the live archived row stays");
+  assert.equal(textOf(elements).includes("gone"), false, "an archive id with no session record renders no ghost row");
+});
+
+
+test("large delete scans use the batch details endpoint", async () => {
+  const { component } = mount();
+  const calls = [];
+  globalThis.fetch = async (url, init) => {
+    const method = String(url).split("/").pop();
+    const payload = init?.body ? JSON.parse(init.body) : {};
+    calls.push([method, payload]);
+    if (method === "details-batch") {
+      const sessions = {};
+      for (const id of payload.sessionIds) sessions[id] = { cwd: "E:/ws", files: [] };
+      return { ok: true, status: 200, json: async () => ({ ok: true, value: { sessions, failed: [] } }) };
+    }
+    return { ok: true, status: 200, json: async () => ({ ok: true, value: { cwd: "E:/ws", files: [] } }) };
+  };
+  const byId = {};
+  for (let i = 0; i < 12; i++) byId["s" + i] = { title: "S" + i, updatedAt: i };
+  const props = {
+    useSessions: (selector) => selector({ byId, phase: "ready" }),
+    useWorkspaces: (selector) => selector({ items: [], archivedSessionIds: [], state: "ready" }),
+    refresh: () => {}, t: T,
+  };
+  const instance = createInstance();
+  const render = () => renderSlotFor(component("settings.section"), props, instance);
+  let elements = render();
+  findElement(elements, (el) => hasClass(el, "aRchv_selectAll")).props.children[0].props.onChange({ target: { checked: true } });
+  elements = render();
+  findElement(elements, (el) => el.props.children === "delete").props.onClick();
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  const batched = calls.filter(([method]) => method === "details-batch");
+  assert.equal(batched.length, 2, "12 ids are scanned as two chunks of at most eight");
+  const ids = batched.flatMap(([, payload]) => payload.sessionIds);
+  assert.equal(new Set(ids).size, 12, "every selected session is scanned once");
+  assert.equal(ids.every((id) => /^s\d+$/.test(id)), true);
+});
+
+
+test("select-all stays deliberately brutal: collapsed groups are included", async () => {
+  const { component } = mount();
+  const calls = [];
+  globalThis.fetch = async (url, init) => {
+    const method = String(url).split("/").pop();
+    const payload = init?.body ? JSON.parse(init.body) : {};
+    calls.push([method, payload]);
+    return { ok: true, status: 200, json: async () => ({ ok: true, value: { cwd: "E:/ws", files: [] } }) };
+  };
+  const byId = { s1: { title: "One" }, s2: { title: "Two" }, s3: { title: "Three" }, s4: { title: "Four" } };
+  const props = {
+    useSessions: (selector) => selector({ byId, phase: "ready" }),
+    useWorkspaces: (selector) => selector({
+      items: [
+        { workspaceId: "w1", title: "W1", path: "E:/w1", sessionIds: ["s1", "s2"] },
+        { workspaceId: "w2", title: "W2", path: "E:/w2", sessionIds: ["s3", "s4"] },
+      ],
+      archivedSessionIds: [], state: "ready",
+    }),
+    refresh: () => {}, t: T,
+  };
+  const instance = createInstance();
+  const render = () => renderSlotFor(component("settings.section"), props, instance);
+  let elements = render();
+  findElement(elements, (el) => el.type === "button" && hasClass(el, "aRchv_groupHeader") && textOf([el]).includes("W1")).props.onClick();
+  elements = render();
+  assert.equal(textOf(elements).includes("One"), false, "W1 is collapsed");
+  findElement(elements, (el) => hasClass(el, "aRchv_selectAll")).props.children[0].props.onChange({ target: { checked: true } });
+  elements = render();
+  findElement(elements, (el) => el.props.children === "delete").props.onClick();
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  const ids = calls.filter(([method]) => method === "details").map(([, payload]) => payload.sessionId).sort();
+  assert.deepEqual(ids, ["s1", "s2", "s3", "s4"], "collapsed rows are selected and scanned too");
+});
+
+test("a Host without details-batch still gets a usable delete scan", async () => {
+  const { component } = mount();
+  const calls = [];
+  globalThis.fetch = async (url, init) => {
+    const method = String(url).split("/").pop();
+    const payload = init?.body ? JSON.parse(init.body) : {};
+    calls.push([method, payload]);
+    if (method === "details-batch") {
+      return { ok: false, status: 404, json: async () => ({ ok: false, error: { code: "not-found", message: "unknown archived API method" } }) };
+    }
+    return { ok: true, status: 200, json: async () => ({ ok: true, value: { cwd: "E:/ws", files: [{ path: "E:/ws/" + payload.sessionId + ".md" }] } }) };
+  };
+  const byId = {};
+  for (let i = 0; i < 12; i++) byId["s" + i] = { title: "S" + i, updatedAt: i };
+  const props = {
+    useSessions: (selector) => selector({ byId, phase: "ready" }),
+    useWorkspaces: (selector) => selector({ items: [], archivedSessionIds: [], state: "ready" }),
+    refresh: () => {}, t: T,
+  };
+  const instance = createInstance();
+  const render = () => renderSlotFor(component("settings.section"), props, instance);
+  let elements = render();
+  findElement(elements, (el) => hasClass(el, "aRchv_selectAll")).props.children[0].props.onChange({ target: { checked: true } });
+  elements = render();
+  findElement(elements, (el) => el.props.children === "delete").props.onClick();
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  assert.ok(calls.some(([method]) => method === "details-batch"), "the bulk endpoint is tried first");
+  const perSession = calls.filter(([method]) => method === "details");
+  assert.equal(perSession.length, 12, "every session falls back to the per-session read");
+  assert.equal(optionRows(render())[1].props["data-count"], "12", "the fallback still counts every produced file");
+});
+
+
+test("a workspace banner toggle selects and clears its own group", () => {
+  const { component } = mount();
+  const byId = { s1: { title: "One" }, s2: { title: "Two" }, s3: { title: "Three" } };
+  const props = {
+    useSessions: (selector) => selector({ byId, phase: "ready" }),
+    useWorkspaces: (selector) => selector({
+      items: [
+        { workspaceId: "w1", title: "W1", path: "E:/w1", sessionIds: ["s1", "s2"] },
+        { workspaceId: "w2", title: "W2", path: "E:/w2", sessionIds: ["s3"] },
+      ],
+      archivedSessionIds: [], state: "ready",
+    }),
+    refresh: () => {}, t: T,
+  };
+  const instance = createInstance();
+  const render = () => renderSlotFor(component("settings.section"), props, instance);
+  const rowOf = (elements, title) => findElement(elements, (el) => hasClass(el, "aRchv_row") && textOf([el]).includes(title));
+  const banner = (elements, label) => findElement(elements, (el) => el.type === "button" && hasClass(el, "aRchv_groupHeader") && textOf([el]).includes(label));
+  const action = (bannerElement, label) => findElement(collect(bannerElement), (el) => el.props?.["aria-label"] === label);
+
+  let elements = render();
+  action(banner(elements, "W1"), "group.selectAll").props.onClick({ stopPropagation() {} });
+  elements = render();
+  assert.ok(hasClass(rowOf(elements, "One"), "aRchv_rowSelected"), "the toggle marks the group's first row");
+  assert.ok(hasClass(rowOf(elements, "Two"), "aRchv_rowSelected"), "the toggle marks the group's second row");
+  assert.equal(hasClass(rowOf(elements, "Three"), "aRchv_rowSelected"), false, "another workspace stays untouched");
+  const activeToggle = action(banner(elements, "W1"), "group.selectAll");
+  assert.equal(activeToggle.props["aria-pressed"], true, "the toggle reports the selected state");
+  assert.ok(findElement(collect(activeToggle), (el) => hasClass(el, "aRchv_checkboxChecked")), "the toggle renders a checked checkbox");
+
+  action(banner(elements, "W1"), "group.selectAll").props.onClick({ stopPropagation() {} });
+  elements = render();
+  assert.equal(hasClass(rowOf(elements, "One"), "aRchv_rowSelected"), false, "clicking the active toggle clears the group");
+  assert.equal(hasClass(rowOf(elements, "Two"), "aRchv_rowSelected"), false);
+  const inactiveToggle = action(banner(elements, "W1"), "group.selectAll");
+  assert.equal(inactiveToggle.props["aria-pressed"], false);
+  assert.equal(findElement(collect(inactiveToggle), (el) => hasClass(el, "aRchv_checkboxChecked")), undefined, "the checkbox clears with the group");
+});
+
+
+test("a subagent detail card inherits the row indent instead of spanning the list", () => {
+  const { component } = mount();
+  globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => ({ ok: true, value: { cwd: "E:/ws", files: [] } }) });
+  const byId = {
+    p0: { title: "Root", updatedAt: 9 },
+    c1: { title: "Child", origin: "subagent", parentId: "p0", updatedAt: 8 },
+  };
+  const props = {
+    useSessions: (selector) => selector({ byId, phase: "ready" }),
+    useWorkspaces: (selector) => selector({ items: [], archivedSessionIds: [], state: "ready" }),
+    refresh: () => {}, t: T,
+  };
+  const instance = createInstance();
+  let elements = renderSlotFor(component("settings.section"), props, instance);
+  findElement(elements, (el) => el.props.children === "view.flat").props.onClick();
+  elements = renderSlotFor(component("settings.section"), props, instance);
+  const rowOf = (title) => findElement(elements, (el) => hasClass(el, "aRchv_row") && textOf([el]).includes(title));
+  const openDetails = (title) => findElement(collect(rowOf(title)), (el) => el.props?.["aria-label"] === "details").props.onClick({ stopPropagation() {} });
+  findElement(collect(rowOf("Root")), (el) => el.props?.["aria-label"] === "subagentExpand").props.onClick({ stopPropagation() {} });
+  elements = renderSlotFor(component("settings.section"), props, instance);
+  openDetails("Root");
+  elements = renderSlotFor(component("settings.section"), props, instance);
+  let cards = elements.filter((el) => hasClass(el, "aRchv_details"));
+  assert.equal(cards.length, 1, "the expanded row renders one card");
+  assert.deepEqual(cards[0].props.style, { marginLeft: 37 }, "the root card skips the disclosure slot and aligns with the checkbox");
+  openDetails("Child");
+  elements = renderSlotFor(component("settings.section"), props, instance);
+  cards = elements.filter((el) => hasClass(el, "aRchv_details"));
+  assert.equal(cards.length, 1, "opening the child moves the card to the child row");
+  assert.deepEqual(cards[0].props.style, { marginLeft: 60 }, "the subagent card aligns with its own checkbox (slot + indent)");
+});
+
+
+test("an orphan subagent detail card aligns with its own row checkbox", () => {
+  const { component } = mount();
+  globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => ({ ok: true, value: { cwd: "E:/ws", files: [] } }) });
+  const byId = { c1: { title: "Orphan", origin: "subagent", parentId: "missing", updatedAt: 1 } };
+  const props = {
+    useSessions: (selector) => selector({ byId, phase: "ready" }),
+    useWorkspaces: (selector) => selector({ items: [], archivedSessionIds: [], state: "ready" }),
+    refresh: () => {}, t: T,
+  };
+  const instance = createInstance();
+  const render = () => renderSlotFor(component("settings.section"), props, instance);
+  const row = findElement(render(), (el) => hasClass(el, "aRchv_row") && textOf([el]).includes("Orphan"));
+  findElement(collect(row), (el) => el.props?.["aria-label"] === "details").props.onClick({ stopPropagation() {} });
+  const cards = render().filter((el) => hasClass(el, "aRchv_details"));
+  assert.equal(cards.length, 1);
+  assert.deepEqual(cards[0].props.style, { marginLeft: 9 }, "an orphan subagent row has no indent, so its card aligns with its checkbox");
+});

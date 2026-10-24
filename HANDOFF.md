@@ -1,6 +1,6 @@
 # dsh-archived-sessions 维护手册（交接文档）
 
-> 本文件面向**接手维护的人（或 AI）**。0.2.0 这一轮把插件从"手改产物 + 私有配置存储"迁到了**官方 settings 通道 + 规范依赖声明**，下面的规则都是照着 DSH 源码与实际踩坑核对过的，改动前先读完「依赖与解析」「配置通道」「常见坑」三节。
+> 本文件面向**接手维护的人（或 AI）**。0.2.0 完成了官方 settings 通道与依赖规范化；0.3.0 又做了内存/性能、删除安全、0.2.x 兼容与会话管理页交互的一轮集中修复。下面的规则都是照着 DSH 源码与实际踩坑核对过的，改动前先读完「依赖与解析」「配置通道」「常见坑」三节。
 
 ## 0. Fork 血统
 
@@ -10,10 +10,10 @@
 
 ## 1. 项目概况
 
-- **host 端**：`lib/index.js`（Node ESM；把 `/archived/api/*` 挂在官方 webServer 上：details / delete / delete-file / open-folder / archive / unarchive）
+- **host 端**：`lib/index.js`（Node ESM；把 `/archived/api/*` 挂在官方 webServer 上：details / details-batch / delete / delete-file / open-folder / archive / unarchive）
 - **client 端**：`lib/client.js`（浏览器 bundle，形如 `window.__ModuleLoader__.load({ id, factory })`；设置页 UI + 三个删除入口）
 - **清单**：`package.json` 的 `dsh.bundle.patch`（`cordis.patch.yml` 里 insert 一个 id 为 `dsh-archived-sessions` 的条目）+ `dsh.client.inject`（客户端半边用到的包）
-- **当前版本**：0.2.0（未发版——上游最后发布的是 0.1.5，本 fork 自 0.2.0 起独立编号，本批未提交的改动全部计入 0.2.0）；core 目标 0.1.7-rc.2
+- **当前版本**：0.3.0（自 0.2.0 起独立编号；0.3.0 是 0.2.1-rc.2 兼容与交互修复版）；core 目标 **0.2.1-rc.2**（保留 0.1.7+ 回退）
 
 ## 2. 代码位置与安装方式
 
@@ -55,7 +55,7 @@ const Config = z.object({
 
 - 原因：`dsh-settings` 的 `volatileForm()` / `isVolatilePath()` **只投影 volatile 字段**；不标 → 该条目连 settings 文档都进不去，写入直接被拒（错误文案 `Plugin entry "…" has no volatile fields`）。
 - `.volatile()` 是 **DSH 对 schemastery 的补丁**，只在 `@deepseek-ai/schemastery` **3.18.3+**（当前 3.18.4）里有；npm 上游裸包 `schemastery` 与 `@deepseek-ai/schemastery@3.18.2` 都**没有**。所以 `dependencies` 必须钉 `^3.18.4`，并保证它被装进本插件的 `node_modules`。
-- 客户端：`inject` 里声明 `"configForms"`（兄弟插件 `dsh-client-ui-settings` 提供的 cordis 服务；服务查找只沿父链走 + facade 按 `inject` 门禁，不声明拿到的是 `undefined`），然后
+- 客户端：0.3.0 起 `"configForms"` **不再写进导出的 `inject`**：apply 时能直接拿到就绑定，拿不到就 `ctx.inject(["configForms"], …)` 等服务出现再绑定，ui-settings 禁用时插件仍能加载（设置页显示不可用红字）。绑定后使用
   ```js
   const form = ctx.configForms.get("dsh-archived-sessions");
   form.subscribe(() => adopt(form.getSnapshot().value));   // snapshot: {status,value,revision,writable,mode}
@@ -81,7 +81,7 @@ const Config = z.object({
 |---|---|---|
 | 会话标题栏垃圾桶 | `conversation.session.header.actions` | `archived-sessions-delete` / 300 |
 | 侧边栏会话行悬停按钮（「…」右边） | `sidebar.workspaces.session.row.action` | 同上 / 300（官方 archive 100、pin 200 之后） |
-| 「…」菜单里的删除项 | `sidebar.workspaces.session.menu.item` | 同上 / 450（官方 pin 100 / rename 200 / fork 300 / archive 400 之后） |
+| 「…」菜单里的删除项 | `sidebar.workspaces.session.menu.item` | 同上 / 460（官方 pin 100 / rename 200 / fork 300 / archive 400 之后） |
 | 确认弹窗 | `shell.overlay` | `archived-sessions-delete-confirm` / 200 |
 
 - **弹窗必须放 `shell.overlay`**：菜单项是 `Menu` 的 children，会随菜单一起卸载；弹窗若长在菜单里，`setMenuOpen(false)` 与 `setOpen(true)` 同批处理后会一起消失（表现为"点了没反应"）。
@@ -101,7 +101,7 @@ pnpm install     # 依赖：宿主半边必须自带 @deepseek-ai/schemastery
 pnpm test        # 等价于仓库根跑 node --test（自动发现 test/**/*.test.mjs）
 ```
 
-`test/` 里是**桩模块图 + 迷你 React**（`test/harness.mjs`）：直接跑构建产物 `lib/index.js` / `lib/client.js`，用 `node:test` 断言。
+`test/` 里是**桩模块图 + 迷你 React**（`test/support/harness.mjs`）：直接跑构建产物 `lib/index.js` / `lib/client.js`，用 `node:test` 断言。0.3.0 起共 **49** 条，新增覆盖观察租约释放、真实文件删除白名单、非 jsonl 后端 501、运行中子代理 409、非法 subagentIds、socket 回环、活跃归档 409、details-batch 与旧宿主回退、横幅全选、当前会话识别、分组搜索、幽灵归档行、详情卡缩进与 `ctx.inject` 延迟绑定。
 
 | 文件 | 锁住的契约 |
 |---|---|
@@ -114,10 +114,10 @@ pnpm test        # 等价于仓库根跑 node --test（自动发现 test/**/*.te
 
 ## 9. 发版流程
 
-1. 改 `package.json` 的 `version`（当前工作区已是 **0.2.0** 且未发布，可直接发；上游最后发布的是 0.1.5，本 fork **自 0.2.0 起独立编号**。改号时记得同时把 README **中英**两处 changelog 段落改名）。
-2. README 的「更新日志 / Changelog」中英双语补条目（写清**为什么**，不只写改了什么）。
+1. 改 `package.json` 的 `version`（当前已是 **0.3.0**；上游最后发布的是 0.1.5，本 fork **自 0.2.0 起独立编号**）。
+2. 在 **CHANGELOG.md** 里补条目（中英双语，写清**为什么**，不只写改了什么）；README 已不再内嵌 changelog。
 3. `pnpm install`（改过依赖时）→ 确认 `pnpm-lock.yaml` 同步。
-4. `files` 白名单已含 `lib / cordis.patch.yml / README.md / docs / LICENSE`。
+4. `files` 白名单已含 `lib / cordis.patch.yml / README.md / CHANGELOG.md / docs / LICENSE`。
 5. `npm publish`（`publishConfig.access: public`）。
 
 ## 10. 常见坑清单
@@ -131,6 +131,9 @@ pnpm test        # 等价于仓库根跑 node --test（自动发现 test/**/*.te
 7. 运行中会话删除会被 409 拒绝（`会话正在运行，无法删除；请先停止该会话`）；批量删除会"部分成功"并汇总失败数。
 8. 宿主拿不到"浏览器当前会话"，所以**单个删除**可以删掉你正在看的空闲会话（批量路径靠 `selectableIds` 排除了 current 行）。
 9. 产出文件判定必须同时认 `tool/call` 和代码内派发的 `tool/ptc-dispatch-start`/`tool/ptc-dispatch`，且相对路径按**会话 cwd** 绝对化——当前 harness 里 agent 只直接调 `run_code`，只认外层 `write`/`edit` 会让所有新会话的产出文件、删除弹窗的「删除产出文件」计数与单个文件删除（归属校验）一起失效。
+10. 详情卡缩进 = 行内边距 8 + （有展开箭头槽位时 28）+ 子代理层级缩进 + 1（复选框居中）；漏掉箭头槽位会让“所有对话”里卡片贴最左，而归档页（无槽位）看起来正常。
+11. 删除弹窗的红色只表示“有子对话但未勾选”；子对话默认勾选、文件默认不勾选；置灰项仍显示上次勾选状态，不要改成强制清空。
+12. `details-batch` 是插件自带接口：客户端 >10 个会话走批量、≤10 逐个，旧宿主 404 时自动回退；详情缓存 5 秒 TTL，删除前宿主仍会做产物文件白名单校验。
 
 ## 11. 路线图（规范化剩余项）
 
@@ -144,8 +147,9 @@ pnpm test        # 等价于仓库根跑 node --test（自动发现 test/**/*.te
 
 | 文件 | 作用 | 约定 |
 |---|---|---|
-| `README.md` | 门面：Fork 声明 + 功能 + 截图 + 安装 + 兼容性 + 更新日志（中英双语） | 每次发版都补 changelog（中英各一份，写清**为什么**不只是**改了什么**）；Fork 声明里必须同时给出**上游**与本 **fork** 两个地址，安装命令一律指向 fork `AkotaP/dsh-archived-sessions` |
-| `USAGE.md` | 纯使用手册（中英双语），标题带版本号 `（v0.2.0）` | 加功能就同步改标题版本号与对应小节；「按住左键滑动批量勾选」、三个删除入口与设置页开关都写在这里 |
+| `README.md` | 门面：Fork 声明 + 功能 + 截图 + 安装 + 兼容性（中英双语） | changelog 已拆到 `CHANGELOG.md`，README 只留链接；Fork 声明里必须同时给出**上游**与本 **fork** 两个地址，安装命令一律指向 fork `AkotaP/dsh-archived-sessions` |
+| `CHANGELOG.md` | 版本变更记录（0.3.0 起中英双语，旧版本已迁入） | 每次发版补条目，写清**为什么**；不要再塞回 README |
+| `USAGE.md` | 纯使用手册（中英双语），标题带版本号 `（v0.3.0）` | 加功能就同步改标题版本号与对应小节；「按住左键滑动批量勾选」、三个删除入口与设置页开关都写在这里 |
 | `HANDOFF.md` | 维护/交接手册（本文件） | 槽位、配置通道、依赖、坑清单有变化时必须同步 |
 
 **截图清单**（`docs/` 下的文件必须全部被 README 引用，少一张就是死链；README 里按**使用顺序**排列，序号与此表一致）：
@@ -177,5 +181,6 @@ pnpm test        # 等价于仓库根跑 node --test（自动发现 test/**/*.te
 - **Slots**: header / row hover / "…" menu row (order 450) plus the confirm dialog in `shell.overlay` — the dialog must not live inside the menu, which unmounts.
 - **Styles**: re-inject the plugin's `<style>` on every load, and double the class name when competing with shipped rules of equal specificity.
 - **Testing**: keep the offline stub-module harness green (slot contract, delete flow, grouping, dialog wording, config channel, running-session 409).
-- **Docs**: `README.md` (bilingual: fork notice + features + screenshots + install + changelog) and `USAGE.md` (bilingual usage manual, version in the title) must be updated together with the code; every file under `docs/` has to stay referenced by README — overwrite screenshots with the same file name instead of leaving an old `.jpg` behind.
-- **Roadmap**: (B) move the harness into `test/` + `pnpm test`; (C) port to TypeScript + tsdown like the rest of the ecosystem.
+- **Docs**: `README.md` (bilingual: fork notice + features + screenshots + install + compatibility), `CHANGELOG.md` (version history, bilingual from 0.3.0) and `USAGE.md` (bilingual usage manual, version in the title) must be updated together with the code; every file under `docs/` has to stay referenced by README — overwrite screenshots with the same file name instead of leaving an old `.jpg` behind.
+- **Version**: 0.3.0, target core 0.2.1-rc.2 (0.1.7+ fallbacks kept). Tests: 49.
+- **Roadmap**: (B) done — harness lives in `test/` with `pnpm test`; (C) port to TypeScript + tsdown like the rest of the ecosystem.

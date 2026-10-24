@@ -127,6 +127,36 @@ test("the client adopts the host document and writes one field per toggle", asyn
   assert.deepEqual(form.setCalls, [["deleteInSidebar", true], ["rememberDeleteOptions", true]], "the option-memory switch writes its own volatile field");
 });
 
+test("configForms binds through ctx.inject when ui-settings arrives later", async () => {
+  installFetch();
+  const plugin = loadClient();
+  const { ctx, slots, injected } = makeClientContext({ form: undefined, injectable: true });
+  plugin.apply(ctx);
+  assert.equal(injected.length, 1, "the plugin waits for configForms instead of blocking its own load");
+  assert.deepEqual(injected[0].deps, ["configForms"]);
+
+  let instance = createInstance();
+  let elements = collect(renderComponent(instance, slots.get("settings.section").component, sectionProps));
+  findElement(elements, (el) => el.props.role === "tab" && el.props.children === "tab.settings").props.onClick();
+  elements = collect(renderComponent(instance, slots.get("settings.section").component, sectionProps));
+  const before = elements.filter((el) => hasClass(el, "aRchv_settingsStatus"));
+  assert.equal(before.length, 1, "before the service arrives the switch namespace is unavailable");
+  assert.equal(hasClass(before[0], "aRchv_settingsStatusError"), true);
+
+  const form = makeConfigForm({ deleteInHeader: true, deleteInSidebar: false, deleteInMenu: true });
+  injected[0].callback(makeClientContext({ form }).ctx);
+
+  instance = createInstance();
+  elements = collect(renderComponent(instance, slots.get("settings.section").component, sectionProps));
+  findElement(elements, (el) => el.props.role === "tab" && el.props.children === "tab.settings").props.onClick();
+  elements = collect(renderComponent(instance, slots.get("settings.section").component, sectionProps));
+  const boxes = elements.filter((el) => hasClass(el, "aRchv_settingsRow")).map((row) => row.props.children[0]);
+  assert.deepEqual(boxes.map((box) => box.props.checked), [true, false, true, false], "the late-bound document is adopted");
+  boxes[1].props.onChange({ target: { checked: true } });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(form.setCalls, [["deleteInSidebar", true]], "writes go through the late-bound form");
+});
+
 test("write failures and an unserved namespace are surfaced in red", async () => {
   const cases = [
     { name: "refused", form: makeConfigForm({}, { refuse: true }), expect: "settings.saveRefused", className: "aRchv_settingsStatusError" },
