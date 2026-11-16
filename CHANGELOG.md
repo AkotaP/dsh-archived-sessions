@@ -1,5 +1,20 @@
 # 更新日志 / Changelog
 
+## 0.3.1（2026-11-16）
+
+> 修复会话管理页删除链路的三处缺陷：批量删除含子对话的会话必失败、未落盘子代理导致整批删除 501、删除后列表仍出现删不掉的「未分组」幽灵行（重启才消失）。
+
+### 删除修复
+- **修复：批量删除含子对话的会话必失败（403 invalid-subagent）** —— 删除弹窗把「本次选中的全部会话的后代合集」广播给每一个删除请求，host 的「子会话必须是该会话真实后代」校验因此把无关目标的请求全部拒绝。现在每个目标只提交它**自己**的后代子对话；父会话与它自己的子对话同时被选中时，子对话折叠进父级联（不再作为独立目标提交而 404）。
+- **修复：未落盘的子代理让整批删除 501** —— 尚未 materialize 的子代理只有 backend 的 pending 条目、没有磁盘目录，旧逻辑要求「还活着」才认这种状态，于是落到 unsupported/501。现在用 jsonl backend 的 hasPendingSession() 精确判定；非 jsonl 后端保持原来的「无 location = 不支持」语义（仍 501）。
+- **修复：删除后宿主仍报告幽灵会话（重启才消失）** —— session/disposed 触发的写句柄 close 是异步的，删除流程提前返回时，host 的 session.list 仍把 pending 当成存在的会话；工作区又已 detach，于是刷新后出现删不掉、无法定位、重启后自行消失的「未分组」行。现在删除在返回前等待 live store 与 persistence 都确认这些 id 不存在（带退避与 2 秒上限），超时后再兜底 detach 与重删目录，并把最终仍可见的 id 写进日志。
+- **修复：客户端列表仍显示已删会话** —— DSH 客户端对 subagent 的 removal 只把 summary 改成「已停止」而不是移除，行要等下一次 session/list 基线才消失；而会话列表的 refresh 是单飞的，删除后那次刷新可能复用到删除前在飞的请求。即使宿主已经 404，那一行仍会留在「未分组」里（表现为删不掉、重启才消失）。现在删除成功后列表立即隐藏这些 id，宿主同时把它们记进**进程级内存名单**（新增 `deleted-ids` 接口），插件每次挂载都拉回这份名单。所以 Web 端刷新页面、关标签页、换标签页都不会让幽灵行回来，只有 DSH 进程真正重启才清空；插件热重载/刷新期间另有一份 `sessionStorage` 副本兜底（旧宿主没有该接口时仍然可用）。删除后还会连续刷新两次、挂载时补一次基线刷新，让客户端基线追上宿主。
+- **改进：删除当前会话后自动切到新会话** —— 删除主视图正在显示的那条会话时，DSH 不会自己离开它（重载后才会掉出来）。现在删除成功后优先 `await uiWorkspace.openWorkspace(该会话所属工作区)`（失败回退 `startSession`），复用该工作区的空白会话（新会话）并打开它；不传 draft options，所以新会话里已输入的未发送内容会原样保留。删除的是子代理（主视图显示子代理）时同样适用。会话 id 比较按 `session-` 前缀归一（客户端行可能带前缀、删除入口给的是纯 uuid）；导航失败时会在控制台与 `localStorage['dsh-archived-sessions/last-navigation']` 留一条诊断。
+
+### 测试
+- 契约测试增至 **59** 条：新增批量删除按目标分组（含父+子同时选中）、未落盘子代理删除、删除后等待持久化层清理、删除后客户端列表立即隐藏残留行、宿主进程级名单（重启清空）、删除当前会话后打开新会话（含 `session-` 前缀归一）、插件重载后过滤仍生效。
+
+---
 ## 0.3.0（2026-10-24）
 
 > 面向 DSH **0.2.1-rc.2**（并对照 0.2.1-rc.3 源码核对）的集中修复版本：内存与性能、删除链路安全、0.2.x 兼容，以及会话管理页/删除弹窗的交互细节。
@@ -38,6 +53,21 @@
 
 ---
 
+## 0.3.1 (2026-11-16)
+
+> Fixes three deletion defects in the Session manager: batch-deleting a selection that contains sub-conversations always failed, an unmaterialized subagent made the whole batch return 501, and a deleted Session could still show up as an undeletable "Ungrouped" row until the next restart.
+
+### Deletion fixes
+- **Fix: batch delete with sub-conversations always failed (403 invalid-subagent)** — the dialog broadcast the selected Sessions' combined descendant set to every delete request, so the host's "subagents must be real descendants" fence rejected every target that did not own that child. Each target now submits only its own descendants, and a child selected together with its parent is folded into the parent's cascade instead of being submitted as a separate root (which would 404).
+- **Fix: unmaterialized subagents turned the batch into a 501** — a subagent that had not materialized yet exists only as a backend pending entry, with no directory on disk. The old rule required a live Session for that state, so it fell into the unsupported/501 branch. The jsonl backend's hasPendingSession() now decides; backends without it keep the old "no location = unsupported" semantics.
+- **Fix: the host still reported a ghost Session after deletion** — the write-handle close triggered by session/disposed is asynchronous, so a delete that returned early left the host's session.list reporting the pending Session while the workspace had already been detached: a refresh showed an undeletable "Ungrouped" row that vanished on restart. Deletion now waits until both the live store and persistence report the ids gone (backoff, 2 s cap), retries the detach and directory removal on timeout, and logs any id that is still visible.
+- **Fix: the client list still showed a deleted Session** — DSH's client only flips a subagent summary to "stopped" on removal instead of dropping the row; the row disappears with the next session/list baseline, and that baseline refresh is single-flight, so the pull right after a delete could reuse a request started before it. Even with the host returning 404, the row stayed in "Ungrouped" (undeletable, gone only after a restart). The page now hides deleted ids immediately, and the host keeps them in a **process-scoped in-memory list** (new `deleted-ids` endpoint) that the plugin re-pulls on every mount. Web refreshes, closed tabs and extra tabs therefore stop showing the ghost rows, and only a real DSH process restart clears the list; a `sessionStorage` copy still covers HMR reloads and older hosts without the endpoint. The page also pulls the baseline twice after a delete and once more on mount so the client catches up with the host.
+- **Changed: deleting the Session on screen opens a fresh one** — DSH keeps rendering a deleted Session instead of leaving it (the user only falls out after a reload). After a successful delete the page now awaits `uiWorkspace.openWorkspace(workspaceId)` for the deleted Session's Workspace (falling back to `startSession`), which reuses that Workspace's blank Session and opens it; no draft options are passed, so whatever the user already typed into the new Session is preserved. Deleting the subagent shown in the main view works the same way. Session ids are compared with the `session-` prefix normalized (client rows may carry it, delete entries may not); a failed navigation leaves a diagnostic in the console and in `localStorage['dsh-archived-sessions/last-navigation']`.
+
+### Tests
+- Contract tests now **59**: batch delete groups subagents per target (including parent + child both selected), unmaterialized-subagent deletion, the post-delete wait for persistence cleanup, immediate hiding of a deleted row the client store still lists, the host process-scoped list (cleared on restart), opening a fresh Session after deleting the one on screen (including `session-` prefix normalization), and the filter surviving a plugin reload.
+
+---
 ## 0.3.0 (2026-10-24)
 
 > A focused fix release for DSH **0.2.1-rc.2** (cross-checked against 0.2.1-rc.3 source): memory/performance, deletion safety, 0.2.x compatibility, and the Session-manager/delete-dialog interactions.

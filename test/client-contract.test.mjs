@@ -166,11 +166,11 @@ test("the delete affordances keep their styles and the entry id matches the bund
 });
 
 /** Open the overlay delete dialog through the header entry and let its details settle. */
-async function openDeleteDialog({ byId, details, config = {}, install = installFetch, waitMs = 30 }) {
+async function openDeleteDialog({ byId, details, config = {}, install = installFetch, waitMs = 30, context = {} }) {
   const deleted = install(details);
   const plugin = loadClient();
   const form = makeConfigForm({ deleteInHeader: true, deleteInSidebar: true, deleteInMenu: true, ...config });
-  const { ctx, slots } = makeClientContext({ form });
+  const { ctx, slots } = makeClientContext({ form, ...context });
   plugin.apply(ctx);
   const useSessionsWith = (selector) => selector({ byId });
   const tCount = (key) => (key === "optionCount" ? "（{n}）" : key);
@@ -827,4 +827,245 @@ test("an orphan subagent detail card aligns with its own row checkbox", () => {
   const cards = render().filter((el) => hasClass(el, "aRchv_details"));
   assert.equal(cards.length, 1);
   assert.deepEqual(cards[0].props.style, { marginLeft: 9 }, "an orphan subagent row has no indent, so its card aligns with its checkbox");
+});
+
+/** Shared doubles for the two batch-delete regressions below. */
+function batchDeleteFixture() {
+  // mount() installs the harness fetch double, so the recording double must be
+  // installed afterwards — otherwise the silent harness double swallows calls.
+  const { component } = mount();
+  const calls = [];
+  globalThis.fetch = async (url, init) => {
+    const method = String(url).split("/").pop();
+    const payload = init?.body ? JSON.parse(init.body) : {};
+    calls.push([method, payload]);
+    if (method === "details-batch") {
+      const sessions = {};
+      for (const id of payload.sessionIds) sessions[id] = { cwd: "E:/ws", files: [] };
+      return { ok: true, status: 200, json: async () => ({ ok: true, value: { sessions, failed: [] } }) };
+    }
+    if (method === "delete") return { ok: true, status: 200, json: async () => ({ ok: true, value: { sessionId: payload.sessionId } }) };
+    return { ok: true, status: 200, json: async () => ({ ok: true, value: { cwd: "E:/ws", files: [] } }) };
+  };
+  const byId = {
+    s1: { title: "Parent", updatedAt: 3 },
+    k1: { title: "Kid", origin: "subagent", parentId: "s1", updatedAt: 2 },
+    s2: { title: "Solo", updatedAt: 1 },
+  };
+  const state = { refreshCalls: 0 };
+  const props = {
+    useSessions: (selector) => selector({ byId, phase: "ready" }),
+    useWorkspaces: (selector) => selector({ items: [], archivedSessionIds: [], state: "ready" }),
+    refresh: () => { state.refreshCalls += 1; }, t: T,
+  };
+  const instance = createInstance();
+  const render = () => renderSlotFor(component("settings.section"), props, instance);
+  const selectAll = () => findElement(render(), (el) => hasClass(el, "aRchv_selectAll")).props.children[0].props.onChange({ target: { checked: true } });
+  const openBatch = () => findElement(render(), (el) => el.props.children === "delete").props.onClick();
+  const confirm = () => openModal(render()).props.footer.props.children[1].props.onClick();
+  const deletes = () => calls.filter(([method]) => method === "delete").map(([, payload]) => [payload.sessionId, payload.subagentIds]);
+  return { calls, state, render, selectAll, openBatch, confirm, deletes };
+}
+
+test("a batch delete submits each target's own sub-conversations only", async () => {
+  // Regression: the dialog used to broadcast the SELECTION's whole descendant set
+  // to every target, so the host's invalid-subagent fence 403'd the entire batch
+  // as soon as any selected parent had a sub-conversation.
+  const fixture = batchDeleteFixture();
+  fixture.selectAll();
+  fixture.openBatch();
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  fixture.confirm();
+  await new Promise((resolve) => setTimeout(resolve, 260));
+  assert.deepEqual(fixture.deletes(), [["s1", ["k1"]], ["s2", []]], "each target carries just its own descendants");
+  assert.ok(fixture.state.refreshCalls >= 2, "the list is re-pulled after the delete, not just the in-flight pull");
+  // The client store can still list a Session the Host already removed (subagent
+  // removals only flip a status); the page must hide it right away.
+  const afterDelete = fixture.render();
+  assert.equal(textOf(afterDelete).includes("Parent"), false, "a deleted row disappears even when the client store still lists it");
+  assert.equal(textOf(afterDelete).includes("Solo"), false);
+});
+
+test("a selected child is folded into its parent's cascade", async () => {
+  const fixture = batchDeleteFixture();
+  // Expand the parent so the sub-conversation row becomes selectable too.
+  findElement(fixture.render(), (el) => el.props["aria-label"] === "subagentExpand").props.onClick({ stopPropagation() {} });
+  fixture.selectAll();
+  fixture.openBatch();
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  fixture.confirm();
+  await new Promise((resolve) => setTimeout(resolve, 260));
+  assert.deepEqual(fixture.deletes(), [["s1", ["k1"]], ["s2", []]], "the child rides the parent's cascade, never its own root request");
+});
+
+/** A client context whose main view shows the given Session in the given Workspace. */
+function currentSessionContext(currentId, workspaceId, { extra } = {}) {
+  let visible = true;
+  const startCalls = [];
+  const sessions = {
+    refresh: async () => {},
+    list: {
+      getSnapshot: () => visible
+        ? { ids: [currentId], byId: { [currentId]: { sessionId: currentId, retainedBy: { mainView: 1 } } } }
+        : { ids: [], byId: {} },
+    },
+  };
+  const workspaces = {
+    refresh: async () => {},
+    list: { getSnapshot: () => ({ items: [{ workspaceId, sessionIds: visible ? [currentId] : [] }] }) },
+  };
+  const services = { uiWorkspace: { startSession: (...args) => startCalls.push(args) } };
+  return {
+    startCalls,
+    context: { services, sessions, workspaces, extra },
+    // Simulate the client dropping the summary as soon as session/removed lands,
+    // which happens while the delete request is still in flight.
+    hideCurrent: () => { visible = false; },
+  };
+}
+
+test("deleting the Session on screen switches DSH to a fresh one", async () => {
+  // DSH keeps rendering the deleted Session's conversation; the plugin now asks
+  // uiWorkspace.startSession() for the workspace's blank Session. No options are
+  // passed, so the new session's unsent draft stays intact.
+  const { startCalls, context, hideCurrent } = currentSessionContext("s1", "w1");
+  const dialog = await openDeleteDialog({
+    byId: { s1: { title: "Current", updatedAt: 2 } },
+    details: { cwd: "E:/ws", files: [] },
+    context,
+  });
+  openModal(dialog.render()).props.footer.props.children[1].props.onClick();
+  // The removal frame can arrive before the delete response; the decision must
+  // come from the snapshot taken before the request.
+  hideCurrent();
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.deepEqual(startCalls, [["w1"]], "the fresh Session opens in the deleted one's workspace, with no draft options");
+});
+
+test("deleting a Session that is not on screen leaves navigation alone", async () => {
+  const { startCalls, context } = currentSessionContext("other", "w1");
+  const dialog = await openDeleteDialog({
+    byId: { s1: { title: "Background", updatedAt: 2 } },
+    details: { cwd: "E:/ws", files: [] },
+    context,
+  });
+  openModal(dialog.render()).props.footer.props.children[1].props.onClick();
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.deepEqual(startCalls, [], "a background delete never moves the main view");
+});
+
+test("the New Session command is the fallback when the workspace service is missing", async () => {
+  const invoked = [];
+  const { startCalls, context } = currentSessionContext("s1", "w1", {
+    extra: { shortcuts: { invoke: (id, shortcutContext) => invoked.push([id, shortcutContext]) } },
+  });
+  context.services = {};
+  const dialog = await openDeleteDialog({
+    byId: { s1: { title: "Current", updatedAt: 2 } },
+    details: { cwd: "E:/ws", files: [] },
+    context,
+  });
+  openModal(dialog.render()).props.footer.props.children[1].props.onClick();
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.deepEqual(startCalls, [], "no workspace service, no direct call");
+  assert.deepEqual(invoked.map(([id]) => id), ["session.new"], "the shipped New Session command is invoked instead");
+});
+
+test("navigation matches a session across the session- prefix", async () => {
+  // Client rows can key a Session as "session-<uuid>" while the delete entry
+  // passes the bare id (and vice versa); the comparison must normalize.
+  const startCalls = [];
+  const sessions = {
+    refresh: async () => {},
+    list: { getSnapshot: () => ({ ids: ["session-s1"], byId: { "session-s1": { sessionId: "session-s1", retainedBy: { mainView: 1 } } } }) },
+  };
+  const workspaces = {
+    refresh: async () => {},
+    list: { getSnapshot: () => ({ items: [{ workspaceId: "w1", sessionIds: ["session-s1"] }] }) },
+  };
+  const services = { uiWorkspace: { startSession: (...args) => startCalls.push(args) } };
+  const dialog = await openDeleteDialog({
+    byId: { s1: { title: "Current", updatedAt: 2 } },
+    details: { cwd: "E:/ws", files: [] },
+    context: { services, sessions, workspaces },
+  });
+  openModal(dialog.render()).props.footer.props.children[1].props.onClick();
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.deepEqual(startCalls, [["w1"]], "a prefixed current-row id still matches the bare delete target");
+});
+
+test("navigation prefers the awaitable openWorkspace over startSession", async () => {
+  const opened = [];
+  const { context } = currentSessionContext("s1", "w1");
+  context.services.uiWorkspace = {
+    startSession: () => { throw new Error("startSession should not be used when openWorkspace exists"); },
+    openWorkspace: async (workspaceId) => { opened.push(workspaceId); },
+  };
+  const dialog = await openDeleteDialog({
+    byId: { s1: { title: "Current", updatedAt: 2 } },
+    details: { cwd: "E:/ws", files: [] },
+    context,
+  });
+  openModal(dialog.render()).props.footer.props.children[1].props.onClick();
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.deepEqual(opened, ["w1"], "openWorkspace is awaited so its failures are visible");
+});
+
+test("deleted ids survive a plugin reload so ghosts stay hidden", async () => {
+  const store = new Map();
+  globalThis.sessionStorage = {
+    getItem: (key) => (store.has(key) ? store.get(key) : null),
+    setItem: (key, value) => { store.set(key, String(value)); },
+    removeItem: (key) => { store.delete(key); },
+  };
+  try {
+    const { context } = currentSessionContext("s1", "w1");
+    const dialog = await openDeleteDialog({
+      byId: { s1: { title: "Gone", updatedAt: 2 } },
+      details: { cwd: "E:/ws", files: [] },
+      context,
+    });
+    openModal(dialog.render()).props.footer.props.children[1].props.onClick();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    // Simulate a page refresh / HMR reload: the bundle state is rebuilt, but the
+    // session-scoped filter set must survive and keep hiding the ghost row.
+    const plugin = loadClient();
+    const { ctx, slots } = makeClientContext({ form: makeConfigForm({ deleteInSidebar: true }) });
+    plugin.apply(ctx);
+    const byId = { s1: { title: "Gone", updatedAt: 2 } };
+    const elements = collect(renderComponent(createInstance(), slots.get("settings.section").component, {
+      useSessions: (selector) => selector({ byId, phase: "ready" }),
+      useWorkspaces: (selector) => selector({ items: [], archivedSessionIds: [], state: "ready" }),
+      refresh: () => {}, t: T,
+    }));
+    assert.equal(textOf(elements).includes("Gone"), false, "a reloaded page still hides the deleted row");
+  } finally {
+    delete globalThis.sessionStorage;
+  }
+});
+
+test("the plugin pulls the host's process-scoped deleted ids on mount", async () => {
+  // Web: closing a tab clears sessionStorage, so the authoritative list lives in
+  // the DSH host process and is pulled again on every mount.
+  const calls = [];
+  globalThis.fetch = async (url, init) => {
+    const method = String(url).split("/").pop();
+    const payload = init?.body ? JSON.parse(init.body) : {};
+    calls.push([method, payload]);
+    if (method === "deleted-ids") return { ok: true, status: 200, json: async () => ({ ok: true, value: { ids: ["s1"] } }) };
+    return { ok: true, status: 200, json: async () => ({ ok: true, value: {} }) };
+  };
+  const plugin = loadClient();
+  const { ctx, slots } = makeClientContext({ form: makeConfigForm({ deleteInSidebar: true }) });
+  plugin.apply(ctx);
+  await new Promise((resolve) => setTimeout(resolve, 700));
+  assert.ok(calls.some(([method]) => method === "deleted-ids"), "the client asks the host for the list");
+  const byId = { s1: { title: "Gone", updatedAt: 2 } };
+  const elements = collect(renderComponent(createInstance(), slots.get("settings.section").component, {
+    useSessions: (selector) => selector({ byId, phase: "ready" }),
+    useWorkspaces: (selector) => selector({ items: [], archivedSessionIds: [], state: "ready" }),
+    refresh: () => {}, t: T,
+  }));
+  assert.equal(textOf(elements).includes("Gone"), false, "host-deleted ids are hidden in a fresh tab");
 });

@@ -5,6 +5,10 @@
  */
 import assert from "node:assert/strict";
 import test from "node:test";
+import { existsSync } from "node:fs";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { callApi, loadHost, makeHostContext } from "./support/harness.mjs";
 
 const mountHost = async (services = {}) => {
@@ -164,10 +168,19 @@ test("delete filePaths removes only produced files on the real filesystem", asyn
       time: 1,
       data: { name: "write", arguments: JSON.stringify({ file_path: outFile }) },
     };
+    // The double reflects the filesystem: once the record is gone the backend must
+    // report the session as gone too, otherwise the post-delete wait would hang.
+    const stored = async () => {
+      try { await fsp.access(logFile); } catch { return undefined; }
+      return { header: meta, revision: "r1", sizeBytes: 1, location: { kind: "jsonl", path: logFile } };
+    };
     const routes = await mountHost({
       sessionPersistence: {
-        stat: async () => ({ header: meta, revision: "r1", sizeBytes: 1, location: { kind: "jsonl", path: logFile } }),
-        list: async () => [{ header: meta, revision: "r1", sizeBytes: 1, location: { kind: "jsonl", path: logFile } }],
+        stat: async () => stored(),
+        list: async () => {
+          const snapshot = await stored();
+          return snapshot === undefined ? [] : [snapshot];
+        },
       },
       sessionQuery: { observeSession: async () => ({ header: meta, events: [writeEvent], [Symbol.dispose]() {} }) },
       workspaceRegistry: { list: () => [{ path: workspace, sessionIds: [] }] },
@@ -197,4 +210,85 @@ test("a backend that cannot locate the record reports 501 instead of pretending"
   const response = await callApi(routes, "delete", { sessionId: "s1" });
   assert.equal(response.status, 501);
   assert.equal(response.body.error.code, "unsupported");
+});
+
+test("a pending subagent with no live entry is deleted instead of failing with 501", async () => {
+  // 删除父会话时，尚未落盘的子代理只以 backend 的 pending 条目存在：它既没有
+  // live session，也没有磁盘目录。旧实现只在 live 时才认这种状态，结果整批删除
+  // 落到 unsupported/501（"找不到记录"的观感）。
+  const home = await mkdtemp(join(tmpdir(), "dsh-arch-home-"));
+  const previousHome = process.env.DSH_HOME;
+  process.env.DSH_HOME = home;
+  try {
+    const parentDir = join(home, "sessions", "--proj--", "parent");
+    await mkdir(parentDir, { recursive: true });
+    const parentLog = join(parentDir, "session.jsonl");
+    await writeFile(parentLog, "{}\n");
+    const parentHeader = header("parent", { cwd: "E:/ws" });
+    const childHeader = header("child", { parentSession: "parent", origin: "subagent" });
+    let childStats = 0;
+    const routes = await mountHost({
+      agents: { get: () => undefined },
+      sessions: { get: () => undefined, list: () => [] },
+      sessionPersistence: {
+        hasPendingSession: (id) => id === "child",
+        stat: async (id) => {
+          if (id === "parent") {
+            return existsSync(parentLog)
+              ? { header: parentHeader, revision: "r-parent", location: { kind: "jsonl", path: parentLog } }
+              : undefined;
+          }
+          childStats += 1;
+          // 前两次是定位与删除判定；之后视为 disposed 触发的 close 已经清理干净。
+          return childStats <= 2 ? { header: childHeader, revision: "memory:1" } : undefined;
+        },
+        // 未落盘的子代理由 backend 的 pending 列表暴露，删除才能认出它是后代。
+        list: async () => [{ header: parentHeader, revision: "r-parent" }, { header: childHeader, revision: "memory:1" }],
+      },
+    });
+    const response = await callApi(routes, "delete", { sessionId: "parent", subagentIds: ["child"] });
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    assert.equal(response.body.ok, true);
+    assert.ok(childStats >= 3, "the delete waits until the pending record is gone");
+    assert.equal(existsSync(parentDir), false, "the parent's session directory is removed");
+  } finally {
+    if (previousHome === undefined) delete process.env.DSH_HOME;
+    else process.env.DSH_HOME = previousHome;
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("the host remembers deleted ids for the lifetime of its process", async () => {
+  // 客户端刷新/换标签页后靠这份名单隐藏残留行；它只活在宿主进程内存里。
+  const pendingPersistence = () => {
+    let stats = 0;
+    return {
+      hasPendingSession: (id) => id === "s1",
+      stat: async (id) => {
+        if (id !== "s1") return undefined;
+        stats += 1;
+        return stats <= 2 ? { header: header("s1"), revision: "memory:1" } : undefined;
+      },
+      list: async () => [{ header: header("s1"), revision: "memory:1" }],
+    };
+  };
+  const routes = await mountHost({
+    agents: { get: () => undefined },
+    sessions: { get: () => undefined, list: () => [] },
+    sessionPersistence: pendingPersistence(),
+  });
+  const deleted = await callApi(routes, "delete", { sessionId: "s1" });
+  assert.equal(deleted.status, 200, JSON.stringify(deleted.body));
+  const listed = await callApi(routes, "deleted-ids", {});
+  assert.equal(listed.status, 200);
+  assert.deepEqual(listed.body.value.ids, ["s1"]);
+
+  // A new module instance is a new Host process: the set must start empty.
+  const restarted = await mountHost({
+    agents: { get: () => undefined },
+    sessions: { get: () => undefined, list: () => [] },
+    sessionPersistence: pendingPersistence(),
+  });
+  const afterRestart = await callApi(restarted, "deleted-ids", {});
+  assert.deepEqual(afterRestart.body.value.ids, [], "the set is process-scoped, not persisted");
 });

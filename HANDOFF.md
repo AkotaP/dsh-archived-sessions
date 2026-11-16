@@ -1,6 +1,6 @@
 # dsh-archived-sessions 维护手册（交接文档）
 
-> 本文件面向**接手维护的人（或 AI）**。0.2.0 完成了官方 settings 通道与依赖规范化；0.3.0 又做了内存/性能、删除安全、0.2.x 兼容与会话管理页交互的一轮集中修复。下面的规则都是照着 DSH 源码与实际踩坑核对过的，改动前先读完「依赖与解析」「配置通道」「常见坑」三节。
+> 本文件面向**接手维护的人（或 AI）**。0.2.0 完成了官方 settings 通道与依赖规范化；0.3.0 做了内存/性能、删除安全、0.2.x 兼容与会话管理页交互的一轮集中修复；0.3.1 修掉批量删除含子对话必失败、未落盘子代理 501 与删除后残留幽灵会话。下面的规则都是照着 DSH 源码与实际踩坑核对过的，改动前先读完「依赖与解析」「配置通道」「常见坑」三节。
 
 ## 0. Fork 血统
 
@@ -10,10 +10,10 @@
 
 ## 1. 项目概况
 
-- **host 端**：`lib/index.js`（Node ESM；把 `/archived/api/*` 挂在官方 webServer 上：details / details-batch / delete / delete-file / open-folder / archive / unarchive）
+- **host 端**：`lib/index.js`（Node ESM；把 `/archived/api/*` 挂在官方 webServer 上：details / details-batch / delete / delete-file / deleted-ids / open-folder / archive / unarchive）
 - **client 端**：`lib/client.js`（浏览器 bundle，形如 `window.__ModuleLoader__.load({ id, factory })`；设置页 UI + 三个删除入口）
 - **清单**：`package.json` 的 `dsh.bundle.patch`（`cordis.patch.yml` 里 insert 一个 id 为 `dsh-archived-sessions` 的条目）+ `dsh.client.inject`（客户端半边用到的包）
-- **当前版本**：0.3.0（自 0.2.0 起独立编号；0.3.0 是 0.2.1-rc.2 兼容与交互修复版）；core 目标 **0.2.1-rc.2**（保留 0.1.7+ 回退）
+- **当前版本**：0.3.1（自 0.2.0 起独立编号；0.3.0 是 0.2.1-rc.2 兼容与交互修复版，0.3.1 修删除链路的一批缺陷（批量分组、未落盘 501、幽灵行、删当前会话后的导航））；core 目标 **0.2.1-rc.2**（保留 0.1.7+ 回退）
 
 ## 2. 代码位置与安装方式
 
@@ -101,20 +101,20 @@ pnpm install     # 依赖：宿主半边必须自带 @deepseek-ai/schemastery
 pnpm test        # 等价于仓库根跑 node --test（自动发现 test/**/*.test.mjs）
 ```
 
-`test/` 里是**桩模块图 + 迷你 React**（`test/support/harness.mjs`）：直接跑构建产物 `lib/index.js` / `lib/client.js`，用 `node:test` 断言。0.3.0 起共 **49** 条，新增覆盖观察租约释放、真实文件删除白名单、非 jsonl 后端 501、运行中子代理 409、非法 subagentIds、socket 回环、活跃归档 409、details-batch 与旧宿主回退、横幅全选、当前会话识别、分组搜索、幽灵归档行、详情卡缩进与 `ctx.inject` 延迟绑定。
+`test/` 里是**桩模块图 + 迷你 React**（`test/support/harness.mjs`）：直接跑构建产物 `lib/index.js` / `lib/client.js`，用 `node:test` 断言。0.3.1 起共 **59** 条，覆盖观察租约释放、真实文件删除白名单、非 jsonl 后端 501、运行中子代理 409、非法 subagentIds、socket 回环、活跃归档 409、details-batch 与旧宿主回退、横幅全选、当前会话识别、分组搜索、幽灵归档行、详情卡缩进、`ctx.inject` 延迟绑定，以及 0.3.1 新增的「批量删除按目标分组」「未落盘子代理删除」「删除后等待持久化清理」「宿主进程级名单跨刷新」「删除当前会话后打开新会话」。
 
 | 文件 | 锁住的契约 |
 |---|---|
-| `test/client-contract.test.mjs` | 五个 slot 的名字/order/id；菜单项结构（危险色 + 分隔线 + 图标，且**菜单树里没有弹窗**）；点选 → `shell.overlay` 弹窗 → `POST /archived/api/delete`；分组折叠（两个标签页 + 单列表）；弹窗文案（`deleteConfirm` + 危险类）与工具栏保留「删除选中」；**选项行计数与「无可删内容置灰禁用」**、**置灰保留记忆勾选**、**选项记忆的继承与关闭**、**渐进刷新（首个文件即解除置灰 / 空集显示占位符）**、**并发读取**、**确认时等待扫描并补上后发现的文件**、**详情缓存只作首帧直出、每次展开都后台重取**；**折叠层级（父行零位移的固定挂件栏、子级 margin-left 逐级 +16、孤儿子代理按顶层渲染并带父会话提示、搜索命中子代理不被吞、无死箭头、归档页子级跟随父级）**；fresh install 默认只开侧边栏；样式规则与 "客户端 `DELETE_CONFIG_ID` 必须等于 `cordis.patch.yml` 里的条目 id" |
+| `test/client-contract.test.mjs` | 五个 slot 的名字/order/id；菜单项结构（危险色 + 分隔线 + 图标，且**菜单树里没有弹窗**）；点选 → `shell.overlay` 弹窗 → `POST /archived/api/delete`；分组折叠（两个标签页 + 单列表）；弹窗文案（`deleteConfirm` + 危险类）与工具栏保留「删除选中」；**选项行计数与「无可删内容置灰禁用」**、**置灰保留记忆勾选**、**选项记忆的继承与关闭**、**渐进刷新（首个文件即解除置灰 / 空集显示占位符）**、**并发读取**、**确认时等待扫描并补上后发现的文件**、**详情缓存只作首帧直出、每次展开都后台重取**；**折叠层级（父行零位移的固定挂件栏、子级 margin-left 逐级 +16、孤儿子代理按顶层渲染并带父会话提示、搜索命中子代理不被吞、无死箭头、归档页子级跟随父级）**；**批量删除按目标分组（每个目标只提交自己的后代；父+子同时选中时子折叠进父级联）**；fresh install 默认只开侧边栏；样式规则与 "客户端 `DELETE_CONFIG_ID` 必须等于 `cordis.patch.yml` 里的条目 id" |
 | `test/config-channel.test.mjs` | 宿主 `Config` 三字段都是 `volatile`；`volatileForm`/`isVolatilePath`/`projectForm` 能投影与写入（抄自 dsh-settings 的实现）；客户端挂载即读文档、一次勾选 = 一次 `form.set`、成功闪绿字并自动收起、被拒绝/抛错/命名空间缺失都出红字；缺服务仍能加载并用默认值；清单里依赖与 `dsh.client.inject` 的声明 |
-| `test/host-api.test.mjs` | 运行中会话 409 `session-busy`；只允许 loopback（外部 Host 403）；缺 sessionId 400；未知 method 404；**已下线的私有 config 接口保持 404**（防止有人把旧通道偷偷加回来） |
+| `test/host-api.test.mjs` | 运行中会话 409 `session-busy`；只允许 loopback（外部 Host 403）；缺 sessionId 400；未知 method 404；**已下线的私有 config 接口保持 404**（防止有人把旧通道偷偷加回来）；**未落盘（pending）子代理可删且不会 501**（`hasPendingSession` 判定）、**删除会等到持久化层不再报告该 id** |
 | `test/detail-files.test.mjs` | 产出文件判定覆盖 `tool/call` 与内层 `tool/ptc-dispatch-start`/`tool/ptc-dispatch`；相对路径按会话 cwd 绝对化、优先取结果里的 `<path>`；不存在的路径被 stat 过滤；内层调用计入工具分布与 fetch、同一次调用的结果不重复计数；`delete-file` 接受代码内产出文件、仍拒绝非产出文件 |
 
 加新功能时：新 slot / 新接口 / 新配置字段，**先在这三个文件里补断言**再改实现。注意 harness 会把 `setInterval` 变成 no-op（组件的 60s 计时器不清除会让 `node --test` 挂住），而 `setTimeout` 保持真实（绿字那条靠它）。
 
 ## 9. 发版流程
 
-1. 改 `package.json` 的 `version`（当前已是 **0.3.0**；上游最后发布的是 0.1.5，本 fork **自 0.2.0 起独立编号**）。
+1. 改 `package.json` 的 `version`（当前已是 **0.3.1**；上游最后发布的是 0.1.5，本 fork **自 0.2.0 起独立编号**）。
 2. 在 **CHANGELOG.md** 里补条目（中英双语，写清**为什么**，不只写改了什么）；README 已不再内嵌 changelog。
 3. `pnpm install`（改过依赖时）→ 确认 `pnpm-lock.yaml` 同步。
 4. `files` 白名单已含 `lib / cordis.patch.yml / README.md / CHANGELOG.md / docs / LICENSE`。
@@ -134,6 +134,11 @@ pnpm test        # 等价于仓库根跑 node --test（自动发现 test/**/*.te
 10. 详情卡缩进 = 行内边距 8 + （有展开箭头槽位时 28）+ 子代理层级缩进 + 1（复选框居中）；漏掉箭头槽位会让“所有对话”里卡片贴最左，而归档页（无槽位）看起来正常。
 11. 删除弹窗的红色只表示“有子对话但未勾选”；子对话默认勾选、文件默认不勾选；置灰项仍显示上次勾选状态，不要改成强制清空。
 12. `details-batch` 是插件自带接口：客户端 >10 个会话走批量、≤10 逐个，旧宿主 404 时自动回退；详情缓存 5 秒 TTL，删除前宿主仍会做产物文件白名单校验。
+13. **批量删除的 `subagentIds` 必须按目标分组**：`delete` 接口只接受「属于该会话的真实后代」，把整批选中会话的后代合集广播给每个请求会让无关目标全部 403 `invalid-subagent`。父会话与它自己的子对话同时被选中时，子对话要折叠进父的级联，否则第二个请求会 404（记录已不存在）。
+14. **删除返回前必须等持久化层也清干净**：`session/disposed` 触发的写句柄 close 是异步的，`session.list` 会把 backend 的 pending 条目当成存在的会话；工作区已 detach → 客户端刷新后出现「未分组」幽灵行，重启才消失。`waitForSessionsGone` 同时等 live store 与 `stat() === undefined`（2 秒上限、退避），超时再 detach + 重删目录并打日志。
+15. **客户端也会自己留幽灵行**：DSH 客户端对 subagent 的 removal 只把 summary 改成「已停止」（`kind: 'status'`），不移除行；真正的移除靠下一次 `session/list` 基线，而 `refreshList` 是**单飞**的——删除后的那次刷新可能复用到删除前在飞的请求。所以宿主在删除成功后把 id 记进**进程级内存名单**（`recordDeletedSessions`，新增 `deleted-ids` 接口），客户端每次挂载拉回这份名单再过滤——Web 刷新/关标签页/换标签页都有效，**只有 DSH 宿主进程重启才清空**；本地另留 `sessionStorage['dsh-archived-sessions/deleted-ids']` 兜底（热重载、旧宿主无接口时）。删除后连刷两次基线、挂载时再补一次。诊断口诀：宿主 `details` 已 404 但 UI 还有行 = 客户端 store 残留，不是宿主的锅。
+16. **「无 location 的 stat 快照」要区分 pending 与不支持的 backend**：jsonl backend 用 `hasPendingSession(id)` 证明；没有这个方法的 backend 保持「非 live 即不支持 → 501」的旧语义，别一律当成可删。
+17. **删除当前会话后要主动导航**：DSH 不会因为会话被删就离开它（重载后才掉出来）。客户端 `uiWorkspace` 服务（`ctx.get('uiWorkspace')`，由 ui-workspace 用 `Service` 注册）提供 `startSession(workspaceId?)`；**不传 options** 时不会初始化草稿，正好复用该工作区的空白会话并保留其未发送输入。判断「当前会话」读 `ctx.sessions.list.getSnapshot().byId` 里 `retainedBy.mainView > 0` 的那条；删的是子代理时同样适用。**id 比较必须按 `session-` 前缀归一**（客户端行与删除入口的 id 形态可能不同，插件其余地方用 normId 就是这个原因）；导航失败时会打 `[dsh-archived-sessions] delete-navigation failed` 并把记录写进 `localStorage['dsh-archived-sessions/last-navigation']`。
 
 ## 11. 路线图（规范化剩余项）
 
@@ -149,7 +154,7 @@ pnpm test        # 等价于仓库根跑 node --test（自动发现 test/**/*.te
 |---|---|---|
 | `README.md` | 门面：Fork 声明 + 功能 + 截图 + 安装 + 兼容性（中英双语） | changelog 已拆到 `CHANGELOG.md`，README 只留链接；Fork 声明里必须同时给出**上游**与本 **fork** 两个地址，安装命令一律指向 fork `AkotaP/dsh-archived-sessions` |
 | `CHANGELOG.md` | 版本变更记录（0.3.0 起中英双语，旧版本已迁入） | 每次发版补条目，写清**为什么**；不要再塞回 README |
-| `USAGE.md` | 纯使用手册（中英双语），标题带版本号 `（v0.3.0）` | 加功能就同步改标题版本号与对应小节；「按住左键滑动批量勾选」、三个删除入口与设置页开关都写在这里 |
+| `USAGE.md` | 纯使用手册（中英双语），标题带版本号 `（v0.3.1）` | 加功能就同步改标题版本号与对应小节；「按住左键滑动批量勾选」、三个删除入口与设置页开关都写在这里 |
 | `HANDOFF.md` | 维护/交接手册（本文件） | 槽位、配置通道、依赖、坑清单有变化时必须同步 |
 
 **截图清单**（`docs/` 下的文件必须全部被 README 引用，少一张就是死链；README 里按**使用顺序**排列，序号与此表一致）：
@@ -182,5 +187,5 @@ pnpm test        # 等价于仓库根跑 node --test（自动发现 test/**/*.te
 - **Styles**: re-inject the plugin's `<style>` on every load, and double the class name when competing with shipped rules of equal specificity.
 - **Testing**: keep the offline stub-module harness green (slot contract, delete flow, grouping, dialog wording, config channel, running-session 409).
 - **Docs**: `README.md` (bilingual: fork notice + features + screenshots + install + compatibility), `CHANGELOG.md` (version history, bilingual from 0.3.0) and `USAGE.md` (bilingual usage manual, version in the title) must be updated together with the code; every file under `docs/` has to stay referenced by README — overwrite screenshots with the same file name instead of leaving an old `.jpg` behind.
-- **Version**: 0.3.0, target core 0.2.1-rc.2 (0.1.7+ fallbacks kept). Tests: 49.
+- **Version**: 0.3.1, target core 0.2.1-rc.2 (0.1.7+ fallbacks kept). Tests: 59.
 - **Roadmap**: (B) done — harness lives in `test/` with `pnpm test`; (C) port to TypeScript + tsdown like the rest of the ecosystem.

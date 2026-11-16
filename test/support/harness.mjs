@@ -189,20 +189,21 @@ export function loadHost(cacheBust = String(Date.now())) {
  * @param options.guarded - emulate the browser facade: the property read throws.
  * @param options.sessions - snapshot for `useSessions`-style reads is supplied by the caller via props.
  */
-export function makeClientContext({ form, declared = true, guarded = false, injectable = false } = {}) {
+export function makeClientContext({ form, declared = true, guarded = false, injectable = false, services, sessions, workspaces, extra } = {}) {
   const slots = new Map();
   const injected = [];
   const ctx = {
     locale: { register: () => {}, bind: () => (key) => key },
     effect: (fn) => { fn(); return () => {}; },
-    get: () => undefined,
-    sessions: {},
-    workspaces: {},
+    get: (name) => services === undefined ? undefined : services[name],
+    sessions: sessions ?? {},
+    workspaces: workspaces ?? {},
     slots: {
       inject: (_name, callback) => callback(),
       register: (options, component) => { slots.set(options.name, { options, component }); return () => {}; },
     },
   };
+  if (extra !== undefined) Object.assign(ctx, extra);
   if (guarded) Object.defineProperty(ctx, "configForms", { get() { throw new Error('cannot get property "configForms" without inject'); } });
   else if (declared && form !== undefined) ctx.configForms = { get: () => form };
   if (injectable) {
