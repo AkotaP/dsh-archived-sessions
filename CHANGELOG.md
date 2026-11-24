@@ -1,5 +1,16 @@
 # 更新日志 / Changelog
 
+## 0.3.2（2026-11-24）
+
+> 对照 DSH **0.2.3-alpha.2** 逐项核对接口后的兼容性小版本：唯一代码改动是命名路由显式声明匿名准入，其余链路复核后无需改动。
+
+### 兼容
+- **适配 0.2.3：命名路由显式声明 `auth: "anonymous"`** —— 0.2.3 起 `webServer.register` 的 `auth` 缺省是 `required`，没有 `webserver/authorize` 准入就回 503。`/archived/api` 本来就自己做 socket 回环、Host 回环、`sec-fetch-site` 与 `Origin` 校验（`isTrustedApiRequest`），显式匿名保持 0.2.2 及更早的行为，不再依赖宿主的鉴权装配。
+- **复核（无改动）**：`workspaceRegistry.list/archiveSession/unarchiveSession/setState`、`Workspace.detachSession`、`sessionPersistence.open/stat/list` 与 `SessionHandle.read(offset, length, options)`、`sessionQuery.observeSession` 在 0.2.3-alpha.2 均保留原签名；`persistence.remove` 缺失时已有 `typeof` 守卫，仍走 `stat().location.path` 删除。
+- **复核（无改动）**：客户端注册的 `settings.section`、`conversation.session.header.actions`、`sidebar.workspaces.session.row.action`、`sidebar.workspaces.session.menu.item`、`shell.overlay` 五条槽位在 0.2.3 的槽位目录（131 条）里都存在；被删的只有其子槽 `conversation.session.header.actions.subagent.footer`。客户端半未使用 0.2.3 移除的客户端 API（`useAnchoredPosition`、`getAnchorRect`、`rankByName`、`uiSession.sessionStatus`、`settings.plugins.tab` 等零命中）。
+
+### 测试
+- 契约测试仍为 **59** 条，全部通过（未改动测试）。
 ## 0.3.1（2026-11-16）
 
 > 修复会话管理页删除链路的三处缺陷：批量删除含子对话的会话必失败、未落盘子代理导致整批删除 501、删除后列表仍出现删不掉的「未分组」幽灵行（重启才消失）。

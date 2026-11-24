@@ -12,7 +12,7 @@
 
 > **Fork 声明**：本仓库是 [Zephyr-vibe/dsh-archived-sessions](https://github.com/Zephyr-vibe/dsh-archived-sessions) 的 **fork**，由 **AkotaP** 二次开发并维护（上游作者 Zephyr-vibe）；**本 fork 的仓库是 [AkotaP/dsh-archived-sessions](https://github.com/AkotaP/dsh-archived-sessions)**，安装与反馈都以它为准；版本号自 **0.2.0** 起与上游分开编号（上游最后发布的是 0.1.5）。上游的 MIT 许可与版权声明原样保留在 [LICENSE](LICENSE) 中；本 fork 的改动全部列在 [CHANGELOG.md](CHANGELOG.md)。
 >
-> 相对上游的主要改动：适配 **DSH 0.2.1-rc.2**（读取原语、0.2.x 当前会话识别、图标改名、slot 变化）· 三处删除入口（标题栏 / 侧边栏「…」右边 / 「…」菜单里）与**独立开关**（走官方 settings 文档）· 分组视图可折叠 + **工作区横幅全选** · 删除链路安全校验与孤儿引用清理 · 删除弹窗的**子对话默认勾选 / 红色警示语义 / 置灰记忆** · 详情批量读取与详情卡缩进对齐 · 离线测试套件（49 条）。
+> 相对上游的主要改动：适配 **DSH 0.2.1-rc.2**（读取原语、0.2.x 当前会话识别、图标改名、slot 变化），并在 **0.2.3-alpha.2** 上复核（命名路由匿名准入）· 三处删除入口（标题栏 / 侧边栏「…」右边 / 「…」菜单里）与**独立开关**（走官方 settings 文档）· 分组视图可折叠 + **工作区横幅全选** · 删除链路安全校验与孤儿引用清理 · 删除弹窗的**子对话默认勾选 / 红色警示语义 / 置灰记忆** · 详情批量读取与详情卡缩进对齐 · 离线测试套件（49 条）。
 
 [English](#english)
 
@@ -100,7 +100,7 @@ agent 会下载项目、放入 profile 的 `node_modules` 并注册到 `dsh.prof
 - **归档 / 恢复**：基于官方 `archiveSession` 相同的 `registry` 状态原语实现
 - **删除不级联**：只删除所选会话，子代理、分叉与文件均保留；运行中的会话拒绝删除（409）
 - **API 仅信任本机请求**（127.0.0.1 / localhost / ::1）；仅使用官方公开 API（`workspaceRegistry`、`sessionPersistence`、`sessionQuery`）
-- **核心版本**：面向 **DSH 0.2.1-rc.2**（在 0.2.1-rc.2 运行版与 0.2.1-rc.3 源码上核对；0.1.7+ 的读取/归档回退仍保留）
+- **核心版本**：面向 **DSH 0.2.3-alpha.2**（在 0.2.3-alpha.2 运行版上核对；0.1.7+ 的读取/归档回退仍保留）
 
 ### 开发与测试
 
@@ -135,7 +135,7 @@ A DSH web plugin: a **Session Manager** in Settings — manage every conversatio
 
 > **Fork notice**: this repository is a **fork** of [Zephyr-vibe/dsh-archived-sessions](https://github.com/Zephyr-vibe/dsh-archived-sessions), further developed and maintained by **AkotaP** (original work by Zephyr-vibe) — **this fork lives at [AkotaP/dsh-archived-sessions](https://github.com/AkotaP/dsh-archived-sessions)**, which is the canonical source for installing it and filing issues; versioning diverges from upstream at **0.2.0** (upstream last shipped 0.1.5). The upstream MIT license and copyright notice are kept verbatim in [LICENSE](LICENSE); every change made by this fork is listed in [CHANGELOG.md](CHANGELOG.md).
 >
-> Main differences from upstream: adapted to **DSH 0.2.1-rc.2** (read primitives, 0.2.x current-Session detection, renamed icon exports, new slots) · three delete entry points (title bar / right of the sidebar "…" / inside the "…" menu) with **independent switches** backed by the official settings document · collapsible workspace grouping + **workspace-banner select-all** · deletion validation and orphan-reference pruning · delete-dialog **default-checked sub-conversations / new red-warning semantics / greyed last-choice display** · bulk detail reads and aligned detail cards · an offline test suite (49 tests).
+> Main differences from upstream: adapted to **DSH 0.2.1-rc.2** (read primitives, 0.2.x current-Session detection, renamed icon exports, new slots) and re-verified on **0.2.3-alpha.2** (anonymous route admission) · three delete entry points (title bar / right of the sidebar "…" / inside the "…" menu) with **independent switches** backed by the official settings document · collapsible workspace grouping + **workspace-banner select-all** · deletion validation and orphan-reference pruning · delete-dialog **default-checked sub-conversations / new red-warning semantics / greyed last-choice display** · bulk detail reads and aligned detail cards · an offline test suite (49 tests).
 
 [中文](#中文)
 
@@ -223,7 +223,7 @@ After installing, restart the web app — the Session Manager appears in Setting
 - **Archive / unarchive**: built on the same `registry` state primitives as the official `archiveSession`
 - **Non-cascading delete**: only the selected session is removed; subagents, forks and files are kept; running sessions are rejected (409)
 - **Loopback-only API** (127.0.0.1 / localhost / ::1); official public APIs only (`workspaceRegistry`, `sessionPersistence`, `sessionQuery`)
-- **Core version**: built for **DSH 0.2.1-rc.2** (verified against the 0.2.1-rc.2 runtime and 0.2.1-rc.3 source; 0.1.7+ read/archive fallbacks are kept)
+- **Core version**: built for **DSH 0.2.3-alpha.2** (verified against the 0.2.3-alpha.2 runtime; 0.1.7+ read/archive fallbacks are kept)
 
 ### Development & tests
 
